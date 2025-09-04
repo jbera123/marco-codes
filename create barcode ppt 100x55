@@ -1,0 +1,131 @@
+Option Explicit
+
+Sub Batch_Create10x55cm_FromImages()
+    '=== Settings ===
+    Const PT_PER_CM As Double = 28.3464567
+    Const SLIDE_W_CM As Double = 10#
+    Const SLIDE_H_CM As Double = 5.5
+    Const MARGIN_CM As Double = 0.5   ' 5 mm
+    Const OVERWRITE_EXISTING As Boolean = False ' set True to overwrite existing PPTX
+    
+    Dim slideW As Double: slideW = SLIDE_W_CM * PT_PER_CM
+    Dim slideH As Double: slideH = SLIDE_H_CM * PT_PER_CM
+    Dim margin As Double: margin = MARGIN_CM * PT_PER_CM
+    Dim boxW As Double: boxW = slideW - 2 * margin
+    Dim boxH As Double: boxH = slideH - 2 * margin
+    
+    Dim folderPath As String
+    folderPath = PickFolder("Choose the folder that contains images to batch convert")
+    If Len(folderPath) = 0 Then Exit Sub
+    
+    Dim extensions As Variant
+    extensions = Array("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tif", "*.tiff")
+    
+    Application.DisplayAlerts = ppAlertsNone
+    
+    Dim f As Variant, filePath As String
+    Dim processed As Long, skipped As Long, errors As Long
+    
+    For Each f In extensions
+        filePath = Dir(folderPath & "\" & f, vbNormal)
+        Do While Len(filePath) > 0
+            On Error GoTo HandleErr
+            
+            Dim imgFull As String
+            imgFull = folderPath & "\" & filePath
+            
+            Dim savePath As String
+            savePath = GetBasePath(imgFull) & ".pptx"
+            
+            If Not OVERWRITE_EXISTING Then
+                If FileExists(savePath) Then
+                    skipped = skipped + 1
+                    GoTo NextFile
+                End If
+            End If
+            
+            ' Create new presentation with custom slide size
+            Dim pres As Presentation
+            Set pres = Presentations.Add(msoTrue)
+            With pres.PageSetup
+                .SlideSize = ppSlideSizeCustom
+                .SlideWidth = slideW
+                .SlideHeight = slideH
+            End With
+            
+            Dim sld As Slide
+            Set sld = pres.Slides.Add(1, ppLayoutBlank)
+            
+            ' Insert image at native size
+            Dim shp As Shape
+            Set shp = sld.Shapes.AddPicture( _
+                        FileName:=imgFull, LinkToFile:=msoFalse, SaveWithDocument:=msoTrue, _
+                        Left:=0, Top:=0, Width:=-1, Height:=-1)
+            
+            ' Fit & center inside safe area
+            FitShapeWithinBox shp, boxW, boxH
+            shp.Left = (slideW - shp.Width) / 2
+            shp.Top = (slideH - shp.Height) / 2
+            
+            pres.SaveAs savePath
+            pres.Close
+            processed = processed + 1
+            
+NextFile:
+            On Error GoTo 0
+            filePath = Dir() ' get next matching file
+        Loop
+    Next f
+    
+    Application.DisplayAlerts = ppAlertsAll
+    
+    MsgBox "Batch complete." & vbCrLf & _
+           "Processed: " & processed & vbCrLf & _
+           "Skipped (exists): " & skipped & vbCrLf & _
+           "Errors: " & errors, vbInformation
+    Exit Sub
+    
+HandleErr:
+    errors = errors + 1
+    Resume Next
+End Sub
+
+'================ Helpers ================
+
+Private Sub FitShapeWithinBox(ByRef shp As Shape, ByVal boxW As Double, ByVal boxH As Double)
+    shp.LockAspectRatio = msoTrue
+    Dim kW As Double, kH As Double, k As Double
+    kW = boxW / shp.Width
+    kH = boxH / shp.Height
+    If kW < kH Then
+        k = kW
+    Else
+        k = kH
+    End If
+    shp.Width = shp.Width * k
+End Sub
+
+Private Function PickFolder(ByVal prompt As String) As String
+    Dim fd As FileDialog
+    Set fd = Application.FileDialog(msoFileDialogFolderPicker)
+    With fd
+        .Title = prompt
+        If .Show = -1 Then
+            PickFolder = .SelectedItems(1)
+        Else
+            PickFolder = ""
+        End If
+    End With
+End Function
+
+Private Function GetBasePath(ByVal fullPath As String) As String
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    GetBasePath = fso.GetParentFolderName(fullPath) & "\" & fso.GetBaseName(fullPath)
+End Function
+
+Private Function FileExists(ByVal fullPath As String) As Boolean
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    FileExists = fso.FileExists(fullPath)
+End Function
