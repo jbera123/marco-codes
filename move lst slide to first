@@ -1,0 +1,93 @@
+Option Explicit
+
+' === Main: pick a folder and process every PPT/PPTX inside ===
+Sub Batch_MoveLastSlideToFront_InFolder()
+    Dim fldr As FileDialog
+    Dim folderPath As String
+    Dim f As String
+    
+    Set fldr = Application.FileDialog(msoFileDialogFolderPicker)
+    With fldr
+        .Title = "Pick a folder with PPT/PPTX files"
+        If .Show <> -1 Then Exit Sub
+        folderPath = .SelectedItems(1)
+    End With
+    
+    If Right$(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
+    
+    Application.DisplayAlerts = ppAlertsNone
+    
+    ' .pptx
+    f = Dir(folderPath & "*.pptx")
+    Do While Len(f) > 0
+        ProcessOneFile folderPath & f
+        f = Dir
+    Loop
+    
+    ' .pptm
+    f = Dir(folderPath & "*.pptm")
+    Do While Len(f) > 0
+        ProcessOneFile folderPath & f
+        f = Dir
+    Loop
+    
+    ' .ppt (legacy)
+    f = Dir(folderPath & "*.ppt")
+    Do While Len(f) > 0
+        ProcessOneFile folderPath & f
+        f = Dir
+    Loop
+    
+    Application.DisplayAlerts = ppAlertsAll
+    Debug.Print "Done. Check the Immediate window for per-file results (Ctrl+G)."
+End Sub
+
+' === Alternative: pick multiple files manually ===
+Sub Batch_MoveLastSlideToFront_PickFiles()
+    Dim fd As FileDialog, i As Long
+    
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    With fd
+        .Title = "Select one or more PowerPoint files"
+        .AllowMultiSelect = True
+        .Filters.Clear
+        .Filters.Add "PowerPoint", "*.pptx; *.pptm; *.ppt"
+        If .Show <> -1 Then Exit Sub
+        Application.DisplayAlerts = ppAlertsNone
+        For i = 1 To .SelectedItems.Count
+            ProcessOneFile .SelectedItems(i)
+        Next i
+        Application.DisplayAlerts = ppAlertsAll
+    End With
+    
+    Debug.Print "Done. Check the Immediate window for per-file results (Ctrl+G)."
+End Sub
+
+' === Worker: open, move last slide to front, save, close ===
+Private Sub ProcessOneFile(ByVal fullPath As String)
+    On Error GoTo EH
+    Dim pres As Presentation
+    Dim sldCount As Long
+    
+    Set pres = Application.Presentations.Open( _
+        FileName:=fullPath, _
+        WithWindow:=msoFalse, _
+        ReadOnly:=msoFalse)
+    
+    sldCount = pres.Slides.Count
+    
+    If sldCount > 1 Then
+        pres.Slides(sldCount).MoveTo 1
+        pres.Save
+        Debug.Print "OK  - " & fullPath & " (moved last->front)"
+    Else
+        Debug.Print "SKIP - " & fullPath & " (only " & sldCount & " slide)"
+    End If
+    
+CLEANUP:
+    If Not pres Is Nothing Then pres.Close
+    Exit Sub
+EH:
+    Debug.Print "ERR - " & fullPath & " (" & Err.Number & ": " & Err.Description & ")"
+    Resume CLEANUP
+End Sub
