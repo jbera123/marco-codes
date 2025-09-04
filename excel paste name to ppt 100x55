@@ -1,0 +1,167 @@
+Option Explicit
+
+' Batch: For each PPT/PPTX in a selected folder, match file name (no extension)
+' to Column A in a selected Excel file, then paste Column B text onto Slide 1.
+Sub Batch_PasteFromExcelToPPTs()
+    Dim fDialog As FileDialog
+    Dim excelPath As String, folderPath As String
+    Dim xlApp As Object, xlWb As Object, xlWs As Object
+    Dim used As Object
+    Dim dict As Object ' Scripting.Dictionary: key = lowercase basename, val = text
+    Dim fso As Object, f As Object
+    Dim pres As Presentation
+    Dim processed As Long, matched As Long, skipped As Long
+    Dim errCount As Long
+    
+    On Error GoTo CleanFail
+    
+    '--- Pick Excel file
+    Set fDialog = Application.FileDialog(msoFileDialogFilePicker)
+    With fDialog
+        .Title = "Select the Excel file (Column A = file name, Column B = text)"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Files", "*.xlsx;*.xlsm;*.xlsb;*.xls"
+        If .Show <> -1 Then
+            MsgBox "No Excel file selected.", vbExclamation
+            Exit Sub
+        End If
+        excelPath = .SelectedItems(1)
+    End With
+    
+    '--- Pick folder of PPT/PPTX files
+    Set fDialog = Application.FileDialog(msoFileDialogFolderPicker)
+    With fDialog
+        .Title = "Select the folder containing PPT/PPTX files"
+        If .Show <> -1 Then
+            MsgBox "No folder selected.", vbExclamation
+            Exit Sub
+        End If
+        folderPath = .SelectedItems(1)
+    End With
+    If Right$(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
+    
+    '--- Load Excel and build lookup dictionary
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible = False
+    Set xlWb = xlApp.Workbooks.Open(excelPath, False, True) ' read-only
+    Set xlWs = xlWb.Worksheets(1)
+    Set used = xlWs.UsedRange
+    
+    Dim lastRow As Long, r As Long
+    Set dict = CreateObject("Scripting.Dictionary")
+    lastRow = used.Rows.Count
+    
+    For r = 1 To lastRow
+        Dim key As String, val As String
+        key = Trim$(CStr(xlWs.Cells(r, 1).Value))
+        val = CStr(xlWs.Cells(r, 2).Value)
+        If Len(key) > 0 Then
+            key = LCase$(RemoveExtension(key))
+            dict(key) = val
+        End If
+    Next r
+    
+    '--- Iterate files in folder
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Dim folderObj As Object
+    Set folderObj = fso.GetFolder(folderPath)
+    
+    For Each f In folderObj.Files
+        If LCase$(fso.GetExtensionName(f.Path)) = "pptx" Or LCase$(fso.GetExtensionName(f.Path)) = "ppt" Or LCase$(fso.GetExtensionName(f.Path)) = "pptm" Then
+            processed = processed + 1
+            On Error GoTo OpenFail
+            Set pres = Presentations.Open(f.Path, ReadOnly:=msoFalse, Untitled:=msoFalse, WithWindow:=msoFalse)
+            On Error GoTo HandleFile
+            
+            Dim baseName As String
+            baseName = RemoveExtension(fso.GetFileName(f.Path))
+            
+            If dict.Exists(LCase$(baseName)) Then
+                Dim txt As String
+                txt = dict(LCase$(baseName))
+                
+                ' Ensure Slide 1 exists
+                If pres.Slides.Count < 1 Then
+                    pres.Slides.Add 1, ppLayoutBlank
+                End If
+                
+                Dim shp As Shape
+                Set shp = GetOrCreateExcelTextShape(pres.Slides(1), pres.PageSetup.SlideWidth, pres.PageSetup.SlideHeight)
+                
+                With shp.TextFrame2.TextRange
+                    .Text = txt
+                End With
+                
+                pres.Save
+                matched = matched + 1
+            Else
+                skipped = skipped + 1
+            End If
+            
+HandleFile:
+            On Error Resume Next
+            If Not pres Is Nothing Then pres.Close
+            Set pres = Nothing
+            On Error GoTo 0
+        End If
+ContinueLoop:
+    Next f
+    
+    MsgBox "Done." & vbCrLf & _
+           "Processed: " & processed & vbCrLf & _
+           "Matched & updated: " & matched & vbCrLf & _
+           "No match (skipped): " & skipped & vbCrLf & _
+           "Errors: " & errCount, vbInformation
+    GoTo CleanExit
+    
+OpenFail:
+    errCount = errCount + 1
+    Resume ContinueLoop
+
+CleanFail:
+    errCount = errCount + 1
+    Resume CleanExit
+    
+CleanExit:
+    On Error Resume Next
+    If Not xlWb Is Nothing Then xlWb.Close SaveChanges:=False
+    If Not xlApp Is Nothing Then xlApp.Quit
+    Set xlWs = Nothing: Set xlWb = Nothing: Set xlApp = Nothing
+End Sub
+
+' Get a shape named "ExcelText" on the slide; if missing, create a centered textbox.
+Private Function GetOrCreateExcelTextShape(ByVal sld As Slide, ByVal w As Single, ByVal h As Single) As Shape
+    Dim shp As Shape
+    On Error Resume Next
+    Set shp = sld.Shapes("ExcelText")
+    On Error GoTo 0
+    
+    If shp Is Nothing Then
+        Set shp = sld.Shapes.AddTextbox( _
+            Orientation:=msoTextOrientationHorizontal, _
+            Left:=(w * 0.15), _
+            Top:=(h * 0.35), _
+            Width:=(w * 0.7), _
+            Height:=(h * 0.3))
+        shp.Name = "ExcelText"
+        With shp.TextFrame2
+            .TextRange.ParagraphFormat.Alignment = msoAlignCenter
+            .TextRange.Font.Size = 36
+            .TextRange.Font.Bold = msoTrue
+            .VerticalAnchor = msoAnchorMiddle
+        End With
+    End If
+    Set GetOrCreateExcelTextShape = shp
+End Function
+
+' Strip extension from a file-like string: "MyDeck.pptx" -> "MyDeck"
+Private Function RemoveExtension(ByVal s As String) As String
+    Dim p As Long
+    p = InStrRev(s, ".")
+    If p > 0 Then
+        RemoveExtension = Left$(s, p - 1)
+    Else
+        RemoveExtension = s
+    End If
+End Function
