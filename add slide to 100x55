@@ -1,0 +1,35 @@
+Sub BatchAddBlankSlideAtEnd()
+    Dim pptApp As PowerPoint.Application
+    Dim pptPres As PowerPoint.Presentation
+    Dim pptSlide As PowerPoint.Slide
+    Dim folderPath As String
+    Dim fileName As String
+    
+    ' Select folder
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Select Folder with Presentations"
+        If .Show <> -1 Then Exit Sub
+        folderPath = .SelectedItems(1) & "\"
+    End With
+    
+    ' Open PowerPoint
+    Set pptApp = New PowerPoint.Application
+    pptApp.Visible = True
+    
+    ' Loop through all PPTX files in the folder
+    fileName = Dir(folderPath & "*.pptx")
+    Do While fileName <> ""
+        Set pptPres = pptApp.Presentations.Open(folderPath & fileName)
+        
+        ' Add a blank slide at the end
+        pptPres.Slides.Add pptPres.Slides.Count + 1, ppLayoutBlank
+        
+        ' Save & close
+        pptPres.Save
+        pptPres.Close
+        
+        fileName = Dir
+    Loop
+    
+    MsgBox "Done! Added blank slides to all presentations in: " & folderPath
+End Sub
