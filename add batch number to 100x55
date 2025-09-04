@@ -1,0 +1,59 @@
+Sub Batch_AddImageToMultiplePPTs()
+    Dim fd As FileDialog
+    Dim pres As Presentation
+    Dim slide As slide
+    Dim img As Shape
+    Dim imgPath As String
+    Dim presPath As String
+    Dim sldWidth As Single, sldHeight As Single
+    Dim imgWidth As Single, imgHeight As Single
+    Dim marginX As Single, marginY As Single
+    Dim fileChosen As Variant
+
+    ' Select image file
+    With Application.FileDialog(msoFileDialogFilePicker)
+        .Title = "Select the image to insert"
+        .Filters.Clear
+        .Filters.Add "Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif"
+        If .Show <> -1 Then Exit Sub
+        imgPath = .SelectedItems(1)
+    End With
+
+    ' Select PPT files
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    With fd
+        .AllowMultiSelect = True
+        .Title = "Select PowerPoint files"
+        .Filters.Clear
+        .Filters.Add "PowerPoint Files", "*.pptx;*.pptm"
+        If .Show <> -1 Then Exit Sub
+    End With
+
+    ' Dimensions in points
+    imgWidth = 28.35  ' 1 cm
+    imgHeight = 28.35 ' 1 cm
+    marginX = 11.34   ' 4 mm
+    marginY = 11.34   ' 4 mm
+
+    ' Loop through each PPT file
+    For Each fileChosen In fd.SelectedItems
+        Set pres = Presentations.Open(fileChosen, WithWindow:=msoFalse)
+        sldWidth = pres.PageSetup.SlideWidth
+        sldHeight = pres.PageSetup.SlideHeight
+
+        ' Loop through slides
+        For Each slide In pres.Slides
+            ' Insert image
+            Set img = slide.Shapes.AddPicture(FileName:=imgPath, _
+                        LinkToFile:=msoFalse, SaveWithDocument:=msoTrue, _
+                        Left:=sldWidth - imgWidth - marginX, _
+                        Top:=sldHeight - imgHeight - marginY, _
+                        Width:=imgWidth, Height:=imgHeight)
+        Next slide
+
+        pres.Save
+        pres.Close
+    Next fileChosen
+
+    MsgBox "Image added to all slides in selected files.", vbInformation
+End Sub
