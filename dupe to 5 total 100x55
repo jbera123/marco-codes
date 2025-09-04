@@ -1,0 +1,37 @@
+Sub BatchDuplicateSlide4x()
+    Dim fDialog As FileDialog
+    Dim selFiles As FileDialogSelectedItems
+    Dim pres As Presentation
+    Dim sld As Slide
+    Dim i As Long
+    Dim f As Variant
+    
+    ' Let user pick multiple PPT files
+    Set fDialog = Application.FileDialog(msoFileDialogFilePicker)
+    With fDialog
+        .AllowMultiSelect = True
+        .Filters.Clear
+        .Filters.Add "PowerPoint Files", "*.pptx; *.pptm; *.ppt"
+        .Title = "Select PowerPoint Files for Batch Processing"
+        If .Show <> -1 Then Exit Sub
+        Set selFiles = .SelectedItems
+    End With
+    
+    ' Loop over each file
+    For Each f In selFiles
+        Set pres = Presentations.Open(FileName:=f, ReadOnly:=msoFalse, Untitled:=msoFalse)
+        
+        ' Duplicate slide 1 four times
+        If pres.Slides.Count > 0 Then
+            For i = 1 To 4
+                pres.Slides(1).Duplicate
+            Next i
+        End If
+        
+        ' Save and close
+        pres.Save
+        pres.Close
+    Next f
+    
+    MsgBox "Batch duplication complete!", vbInformation
+End Sub
