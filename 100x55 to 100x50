@@ -1,0 +1,192 @@
+'===========================================
+' Batch rescale 100x55 mm slides to 100x50 mm
+' • Processes all PPTX/PPTM/PPT in a chosen folder
+' • Overwrites files IN PLACE
+' • Robust slide-size change to avoid 80004005
+'===========================================
+Option Explicit
+
+' ----- Config -----
+Private Const MM_TO_PT As Double = 2.834645669291339 ' 1 mm ≈ 2.83464567 pt
+Private Const SRC_W_MM As Double = 100
+Private Const SRC_H_MM As Double = 55
+Private Const DST_W_MM As Double = 100
+Private Const DST_H_MM As Double = 50
+Private Const TOL_PT   As Double = 0.5              ' tolerance for size match (points)
+Private Const PROCESS_MASTERS As Boolean = False     ' set True to also scale master/layout shapes
+Private Const OPEN_WITH_WINDOW As Boolean = True     ' msoTrue is more reliable for PageSetup
+
+' ----- Entry point -----
+Public Sub Batch_Scale_100x55_to_100x50()
+    Dim folderPath As String
+    folderPath = GetFolder()
+    If Len(folderPath) = 0 Then Exit Sub
+    
+    Dim processed As Long, skipped As Long, failed As Long
+    Dim f As String
+    
+    Application.DisplayAlerts = ppAlertsNone
+    
+    ' Process .pptx / .pptm / .ppt
+    f = Dir(folderPath & "\*.ppt*")
+    Do While Len(f) > 0
+        Dim pres As Presentation
+        Dim fullPath As String: fullPath = folderPath & "\" & f
+        
+        On Error GoTo HandleErr
+        If OPEN_WITH_WINDOW Then
+            Set pres = Application.Presentations.Open(fullPath, WithWindow:=msoTrue)
+        Else
+            Set pres = Application.Presentations.Open(fullPath, WithWindow:=msoFalse)
+        End If
+        
+        If IsSourceSize(pres) Then
+            ScaleAllSlides pres
+            If SafeSetSlideSize(pres, DST_W_MM * MM_TO_PT, DST_H_MM * MM_TO_PT) Then
+                pres.Save
+                processed = processed + 1
+            Else
+                failed = failed + 1
+            End If
+        Else
+            skipped = skipped + 1
+        End If
+        
+        pres.Close
+        GoTo NextFile
+        
+HandleErr:
+        failed = failed + 1
+        On Error Resume Next
+        If Not pres Is Nothing Then pres.Close
+        On Error GoTo 0
+        
+NextFile:
+        f = Dir()
+    Loop
+    
+    Application.DisplayAlerts = ppAlertsAll
+    
+    MsgBox "Done." & vbCrLf & _
+           "Processed (overwritten): " & processed & vbCrLf & _
+           "Skipped (not 100×55 mm): " & skipped & vbCrLf & _
+           "Failed: " & failed, vbInformation
+End Sub
+
+' ----- Helpers -----
+
+Private Function GetFolder() As String
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Choose folder with PPTX/PPTM/PPT (OVERWRITE IN PLACE)"
+        If .Show = -1 Then GetFolder = .SelectedItems(1)
+    End With
+End Function
+
+Private Function IsSourceSize(pres As Presentation) As Boolean
+    Dim srcWpt As Double: srcWpt = SRC_W_MM * MM_TO_PT
+    Dim srcHpt As Double: srcHpt = SRC_H_MM * MM_TO_PT
+    IsSourceSize = (Abs(pres.PageSetup.SlideWidth - srcWpt) <= TOL_PT) _
+                And (Abs(pres.PageSetup.SlideHeight - srcHpt) <= TOL_PT)
+End Function
+
+Private Sub ScaleAllSlides(pres As Presentation)
+    Dim srcWpt As Double: srcWpt = SRC_W_MM * MM_TO_PT
+    Dim srcHpt As Double: srcHpt = SRC_H_MM * MM_TO_PT
+    Dim dstWpt As Double: dstWpt = DST_W_MM * MM_TO_PT
+    Dim dstHpt As Double: dstHpt = DST_H_MM * MM_TO_PT
+    
+    Dim sx As Double: sx = IIf(srcWpt = 0, 1, dstWpt / srcWpt) ' expected 1.0
+    Dim sy As Double: sy = IIf(srcHpt = 0, 1, dstHpt / srcHpt) ' ≈ 0.909090...
+    
+    Dim s As Slide, i As Long
+    For Each s In pres.Slides
+        For i = 1 To s.Shapes.Count
+            ScaleShape s.Shapes(i), sx, sy
+        Next i
+    Next s
+    
+    If PROCESS_MASTERS Then
+        Dim lay As CustomLayout, j As Long
+        For Each lay In pres.SlideMaster.CustomLayouts
+            For j = 1 To lay.Shapes.Count
+                ScaleShape lay.Shapes(j), sx, sy
+            Next j
+        Next lay
+        ' Optionally also scale SlideMaster itself:
+        'Dim k As Long
+        'For k = 1 To pres.SlideMaster.Shapes.Count
+        '    ScaleShape pres.SlideMaster.Shapes(k), sx, sy
+        'Next k
+    End If
+End Sub
+
+Private Sub ScaleShape(ByRef shp As Shape, ByVal sx As Double, ByVal sy As Double)
+    On Error Resume Next
+    
+    If shp.Type = msoGroup Then
+        Dim g As GroupShapes, n As Long
+        Set g = shp.GroupItems
+        For n = 1 To g.Count
+            ScaleShape g.Item(n), sx, sy
+        Next n
+        ' Refresh group bounds; ignore errors if ungroup is not allowed
+        shp.Ungroup.Regroup
+    Else
+        ' Reposition relative to top-left origin
+        shp.Left = shp.Left * sx
+        shp.Top  = shp.Top  * sy
+        
+        ' Resize; respect locked aspect ratio
+        If shp.LockAspectRatio = msoTrue Then
+            Dim w1 As Double, h1 As Double
+            w1 = shp.Width * sx
+            h1 = shp.Height * sy
+            If (w1 / shp.Width) < (h1 / shp.Height) Then
+                shp.Width = w1
+            Else
+                shp.Height = h1
+            End If
+        Else
+            shp.Width  = shp.Width  * sx
+            shp.Height = shp.Height * sy
+        End If
+    End If
+    
+    On Error GoTo 0
+End Sub
+
+' ----- Robust slide-size setter to avoid 80004005 -----
+Private Function SafeSetSlideSize(pres As Presentation, ByVal wPt As Double, ByVal hPt As Double) As Boolean
+    On Error GoTo Try2
+    ' 1) Direct set (no SlideSize toggle)
+    pres.PageSetup.SlideWidth = wPt
+    pres.PageSetup.SlideHeight = hPt
+    SafeSetSlideSize = True
+    Exit Function
+    
+Try2:
+    On Error GoTo Try3
+    Err.Clear
+    ' 2) Jump to a safe preset size, then to target
+    pres.PageSetup.SlideWidth = 720   ' 10 in * 72 pt
+    pres.PageSetup.SlideHeight = 540  ' 7.5 in * 72 pt
+    DoEvents
+    pres.PageSetup.SlideWidth = wPt
+    pres.PageSetup.SlideHeight = hPt
+    SafeSetSlideSize = True
+    Exit Function
+    
+Try3:
+    On Error GoTo Fail
+    Err.Clear
+    ' 3) Briefly touch SlideSize preset, then set W/H
+    pres.PageSetup.SlideSize = ppSlideSizeOnScreen
+    DoEvents
+    pres.PageSetup.SlideWidth = wPt
+    pres.PageSetup.SlideHeight = hPt
+    SafeSetSlideSize = True
+    Exit Function
+    
+Fail:
+    SafeSetSlideSize = False
+End Function
