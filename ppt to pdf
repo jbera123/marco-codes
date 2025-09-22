@@ -1,0 +1,39 @@
+Sub BatchConvertPPTtoPDF()
+    Dim pptApp As PowerPoint.Application
+    Dim pptPres As PowerPoint.Presentation
+    Dim pptFile As String
+    Dim pdfPath As String
+    Dim folderPath As String
+    Dim fDialog As FileDialog
+    
+    ' Ask user to select a folder
+    Set fDialog = Application.FileDialog(msoFileDialogFolderPicker)
+    With fDialog
+        .Title = "Select folder with PPT files"
+        If .Show <> -1 Then Exit Sub
+        folderPath = .SelectedItems(1)
+    End With
+    
+    If Right(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
+    
+    pptFile = Dir(folderPath & "*.ppt*") ' get .ppt and .pptx files
+    
+    Set pptApp = New PowerPoint.Application
+    pptApp.Visible = msoTrue
+    
+    Do While pptFile <> ""
+        Set pptPres = pptApp.Presentations.Open(folderPath & pptFile, WithWindow:=msoFalse)
+        
+        pdfPath = folderPath & Replace(pptFile, ".pptx", ".pdf")
+        pdfPath = Replace(pdfPath, ".ppt", ".pdf")
+        
+        pptPres.SaveAs pdfPath, ppSaveAsPDF
+        pptPres.Close
+        
+        pptFile = Dir
+    Loop
+    
+    pptApp.Quit
+    
+    MsgBox "Batch conversion completed!"
+End Sub
